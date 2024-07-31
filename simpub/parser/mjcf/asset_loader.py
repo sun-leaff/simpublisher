@@ -17,9 +17,7 @@ class TextureLoader:
 
     @staticmethod
     def fromBuiltin(
-        name: str,
-        builtin_name: str,
-        tint: Optional[np.ndarray] = None
+        name: str, builtin_name: str, tint: Optional[np.ndarray] = None
     ) -> Tuple[SimTexture, bytes]:
         img: Image.Image
         if builtin_name == "checker":
@@ -39,20 +37,13 @@ class TextureLoader:
         texture_hash = md5(tex_data).hexdigest()
 
         texture = SimTexture(
-            id=name,
-            width=width,
-            height=height,
-            textureType="2d",
-            dataHash=texture_hash
+            id=name, width=width, height=height, textureType="2d", dataHash=texture_hash
         )
         return texture, tex_data
 
     @staticmethod
     def from_bytes(
-        name: str,
-        content: bytes,
-        texture_type: str,
-        tint: Optional[np.ndarray] = None
+        name: str, content: bytes, texture_type: str, tint: Optional[np.ndarray] = None
     ) -> Tuple[SimTexture, bytes]:
         with io.BytesIO(content) as file_data:
             img = Image.open(file_data).convert("RGBA")
@@ -82,7 +73,7 @@ class TextureLoader:
         b = b.point(lambda i: i * tint[2])
 
         # Merge the bands back together
-        return Image.merge('RGBA', (r, g, b, a))
+        return Image.merge("RGBA", (r, g, b, a))
 
 
 class MeshLoader:
@@ -97,10 +88,7 @@ class MeshLoader:
 
     @staticmethod
     def from_bytes(
-        name: str,
-        content: bytes,
-        mesh_type: str,
-        scale: np.ndarray
+        name: str, content: bytes, mesh_type: str, scale: np.ndarray
     ) -> Tuple[SimMesh, bytes]:
         with io.BytesIO(content) as data:
             mesh: trimesh.Trimesh = trimesh.load_mesh(
@@ -111,16 +99,12 @@ class MeshLoader:
 
     @staticmethod
     def from_loaded_mesh(
-        mesh: trimesh.Trimesh,
-        name: str,
-        scale: Optional[np.ndarray] = None
+        mesh: trimesh.Trimesh, name: str, scale: Optional[np.ndarray] = None
     ) -> Tuple[SimMesh, bytes]:
         if scale is not None:
             mesh.apply_scale(scale)
         mesh = mesh.apply_transform(
-            trimesh.transformations.euler_matrix(
-                -math.pi / 2.0, math.pi / 2.0, 0
-            )
+            trimesh.transformations.euler_matrix(-math.pi / 2.0, math.pi / 2.0, 0)
         )
         indices = mesh.faces.astype(np.int32)
         bin_buffer = io.BytesIO()
@@ -135,11 +119,11 @@ class MeshLoader:
         norms[:, 2] = -norms[:, 2]
         norms = norms.flatten()
         normal_layout = bin_buffer.tell(), norms.shape[0]
-        bin_buffer.write(norms) 
+        bin_buffer.write(norms)
         # Indices
         indices = mesh.faces.astype(np.int32)
         indices = indices[:, [2, 1, 0]]
-        indices = indices.flatten() 
+        indices = indices.flatten()
         indices_layout = bin_buffer.tell(), indices.shape[0]
         bin_buffer.write(indices)
         # Texture coords
@@ -159,6 +143,6 @@ class MeshLoader:
             verticesLayout=vertices_layout,
             normalsLayout=normal_layout,
             uvLayout=uv_layout,
-            dataHash=hash
+            dataHash=hash,
         )
         return mesh, bin_data

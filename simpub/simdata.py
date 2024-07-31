@@ -14,14 +14,14 @@ class VisualType(str, Enum):
     CYLINDER = "CYLINDER"
     PLANE = "PLANE"
     QUAD = "QUAD"
-    MESH = "MESH",
+    MESH = ("MESH",)
     NONE = "NONE"
 
 
 class AssetType(str, Enum):
-    MATERIAL = "MATERIAL",
-    TEXTURE = "TEXTURE",
-    MESH = "MESH",
+    MATERIAL = ("MATERIAL",)
+    TEXTURE = ("TEXTURE",)
+    MESH = ("MESH",)
 
 
 @dataclass
@@ -85,7 +85,6 @@ class SimTransform(SimData):
 
 @dataclass
 class SimVisual(SimData):
-
     type: VisualType
     trans: SimTransform
     mesh: str = None
@@ -102,7 +101,6 @@ class SimObject(SimData):
 
 
 class SimScene(SimData):
-
     def __init__(self) -> None:
         self.root: SimObject = None
         self.id: str = str(random.randint(int(1e9), int(1e10 - 1)))
