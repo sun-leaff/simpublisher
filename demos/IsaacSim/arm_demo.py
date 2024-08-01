@@ -8,6 +8,7 @@ import io
 from hashlib import md5
 import trimesh
 import random
+import math
 
 from simpub.server import SimPublisher
 from simpub.simdata import (
@@ -40,7 +41,7 @@ import numpy as np
 import torch
 
 import omni.usd
-from pxr import Usd, UsdGeom, UsdUtils, UsdPhysics
+from pxr import Usd, UsdGeom, UsdUtils, UsdPhysics, Gf
 import numpy as np
 import omni
 import carb
@@ -112,13 +113,14 @@ def design_scene() -> tuple[dict, list[list[float]]]:
 
     # Origin 1 with Franka Panda
     prim_utils.create_prim("/World/Origin1", "Xform", translation=origins[0])
+    prim_utils.create_prim("/World/Origin1/Tables", "Xform")
 
     # -- Table
     cfg = sim_utils.UsdFileCfg(
         usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd"
     )
-    cfg.func("/World/Origin1/Table", cfg, translation=(0.55, 0.0, 1.05))
-    cfg.func("/World/Origin1/Table_1", cfg, translation=(0.55, 3.0, 1.05))
+    cfg.func("/World/Origin1/Tables/Table", cfg, translation=(0.55, 0.0, 1.05))
+    cfg.func("/World/Origin1/Tables/Table_1", cfg, translation=(0.55, 3.0, 1.05))
 
     # -- Robot
     franka_arm_cfg = FRANKA_PANDA_CFG.replace(prim_path="/World/Origin1/Robot")
@@ -211,7 +213,7 @@ class IsaacSimPublisher(SimPublisher):
         scene = SimScene()
         self.sim_scene = scene
 
-        scene.root = SimObject(name="root")
+        scene.root = SimObject(name="root", trans=SimTransform())
 
         obj1 = SimObject(name="object_1")
         obj1.visuals.append(
@@ -285,7 +287,7 @@ class IsaacSimPublisher(SimPublisher):
         )
         scene.root.children.append(obj2)
 
-        obj2 = self.parse_prim_tree(stage.GetPrimAtPath("/World/Origin1/Robot"))
+        obj2 = self.parse_prim_tree(stage.GetPrimAtPath("/World/Origin1/Tables"))
         assert obj2 is not None
         scene.root.children.append(obj2)
 
@@ -299,71 +301,162 @@ class IsaacSimPublisher(SimPublisher):
         if purpose_attr and purpose_attr.Get() in {"proxy", "guide"}:
             return
 
-        trans_mat = omni.usd.get_local_transform_matrix(root)
+        timeline = omni.timeline.get_timeline_interface()
+        timecode = timeline.get_current_time() * timeline.get_time_codes_per_seconds()
+
+        trans_mat = omni.usd.get_local_transform_matrix(root, timecode)
+
+        # row_y, row_z = trans_mat.GetRow(1), trans_mat.GetRow(2)
+        # trans_mat.SetRow(1, row_z)
+        # trans_mat.SetRow(2, row_y)
+        # col_y, col_z = trans_mat.GetColumn(1), trans_mat.GetColumn(2)
+        # trans_mat.SetColumn(1, col_z)
+        # trans_mat.SetColumn(2, col_y)
+
+        # print(trans_mat.IsLeftHanded(), trans_mat.IsRightHanded())
+        # print(trans_mat)
+
+        x_scale = Gf.Vec3d(
+            trans_mat[0][0], trans_mat[0][1], trans_mat[0][2]
+        ).GetLength()
+        y_scale = Gf.Vec3d(
+            trans_mat[1][0], trans_mat[1][1], trans_mat[1][2]
+        ).GetLength()
+        z_scale = Gf.Vec3d(
+            trans_mat[2][0], trans_mat[2][1], trans_mat[2][2]
+        ).GetLength()
+        scale = [x_scale, z_scale, y_scale]
+        # print("\t" * indent, x_scale, y_scale, z_scale)
 
         translate = trans_mat.ExtractTranslation()
-        translate = [translate[0], translate[1], translate[2]]
+        translate = [-translate[1], translate[2], translate[0]]
 
         rot = trans_mat.ExtractRotationQuat()
         imag = rot.GetImaginary()
-        rot = [imag[0], imag[1], imag[2], rot.GetReal()]
+        rot = [imag[1], -imag[2], -imag[0], rot.GetReal()]
 
         sim_object = SimObject(
             name=str(root.GetPrimPath()).replace("/", "_"),
-            trans=SimTransform(pos=translate, rot=rot),
+            trans=SimTransform(pos=translate, rot=rot, scale=scale),
         )
 
-        carb.log_info(
+        print(
             "\t" * indent
-            + f"{root.GetName()}: {root.GetTypeName()} {root.GetAttribute('purpose').Get()}"
+            + f"{root.GetPrimPath()}: {root.GetTypeName()} {root.GetAttribute('purpose').Get()}"
         )
 
         # maybe time_code is necessary
         # trans_mat = omni.usd.get_local_transform_matrix(root)
-        # carb.log_info("\t" * indent + f"{trans_mat}")
+        # print("\t" * indent + f"{trans_mat}")
 
         # attr: Usd.Property
         # for attr in root.GetProperties():
-        #     carb.log_info("\t" * indent + f"{attr.GetName()}")
+        #     print("\t" * indent + f"{attr.GetName()}")
 
         if root.GetTypeName() == "Mesh":
             mesh_prim = UsdGeom.Mesh(root)
             assert mesh_prim is not None
 
-            points = (
-                np.asarray(mesh_prim.GetPointsAttr().Get()).astype(np.float32).flatten()
-            )
-            normals = (
-                np.asarray(mesh_prim.GetNormalsAttr().Get())
-                .astype(np.float32)
-                .flatten()
-            )
-            indices = (
-                np.asarray(mesh_prim.GetFaceVertexIndicesAttr().Get())
-                .astype(np.int32)
-                .flatten()
+            points = np.asarray(mesh_prim.GetPointsAttr().Get()).astype(np.float32)
+            # points[:, [1, 2]] = points[:, [2, 1]]
+
+            normals = np.asarray(mesh_prim.GetNormalsAttr().Get()).astype(np.float32)
+            # normals[:, [1, 2]] = normals[:, [2, 1]]
+
+            indices = np.asarray(mesh_prim.GetFaceVertexIndicesAttr().Get()).astype(
+                np.int32
             )
 
-            carb.log_info(f"normals: {normals.shape}")
-            # carb.log_info(
+            mesh_obj = trimesh.Trimesh(vertices=points, faces=indices.reshape(-1, 3))
+            mesh_obj = mesh_obj.apply_transform(
+                trimesh.transformations.euler_matrix(-math.pi / 2.0, math.pi / 2.0, 0)
+            )
+            mesh_obj.fix_normals()
+
+            points = points.flatten()
+            normals = normals.flatten()
+            indices = indices.flatten()
+
+            print(
+                "\t" * indent
+                + f"vertices size: {points.shape[0] // 3} {points.shape[0] % 3}"
+            )
+            print(
+                "\t" * indent
+                + f"normals size: {normals.shape[0] // 3} {normals.shape[0] % 3}"
+            )
+            print(
+                "\t" * indent
+                + f"triangles: {indices.shape[0] // 3} {indices.shape[0] % 3}"
+            )
+
+            assert normals.shape[0] // 3 == indices.shape[0]
+            print(
+                "\t" * indent
+                + f"normal per index: {normals.shape[0] // 3} {indices.shape[0]}"
+            )
+            # print(
             #     "\t" * indent + f"@vert {points} {points.dtype} {points.shape}"
             # )
-            # carb.log_info(
+            # print(
             #     "\t" * indent + f"@indi {indices} {indices.dtype} {indices.shape}"
             # )
 
+            # bin_buffer = io.BytesIO()
+
+            # # Vertices
+            # vertices_layout = bin_buffer.tell(), points.shape[0]
+            # bin_buffer.write(points)
+            # print("\t" * indent + f"vertices layout: {vertices_layout}")
+
+            # normals_layout = bin_buffer.tell(), normals.shape[0]
+            # bin_buffer.write(normals)
+            # print("\t" * indent + f"normals layout: {normals_layout}")
+
+            # # Indices
+            # indices_layout = bin_buffer.tell(), indices.shape[0]
+            # bin_buffer.write(indices)
+
+            # bin_data = bin_buffer.getvalue()
+            # hash = md5(bin_data).hexdigest()
+
+            # mesh_id = "@mesh-" + str(random.randint(int(1e9), int(1e10 - 1)))
+            # mesh = SimMesh(
+            #     id=mesh_id,
+            #     indicesLayout=indices_layout,
+            #     verticesLayout=vertices_layout,
+            #     dataHash=hash,
+            #     normalsLayout=(0, 0),
+            #     uvLayout=(0, 0),
+            # )
+
+            indices = mesh_obj.faces.astype(np.int32)
             bin_buffer = io.BytesIO()
-
             # Vertices
-            vertices_layout = bin_buffer.tell(), points.shape[0]
-            bin_buffer.write(points)
-
-            normals_layout = bin_buffer.tell(), normals.shape[0]
-            bin_buffer.write(normals)
-
+            verts = mesh_obj.vertices.astype(np.float32)
+            verts[:, 2] = -verts[:, 2]
+            verts = verts.flatten()
+            vertices_layout = bin_buffer.tell(), verts.shape[0]
+            bin_buffer.write(verts)
+            # Normals
+            norms = mesh_obj.vertex_normals.astype(np.float32)
+            norms[:, 2] = -norms[:, 2]
+            norms = norms.flatten()
+            normal_layout = bin_buffer.tell(), norms.shape[0]
+            bin_buffer.write(norms)
             # Indices
+            indices = mesh_obj.faces.astype(np.int32)
+            indices = indices[:, [2, 1, 0]]
+            indices = indices.flatten()
             indices_layout = bin_buffer.tell(), indices.shape[0]
             bin_buffer.write(indices)
+            # Texture coords
+            uv_layout = (0, 0)
+            if hasattr(mesh_obj.visual, "uv"):
+                uvs = mesh_obj.visual.uv.astype(np.float32)
+                uvs[:, 1] = 1 - uvs[:, 1]
+                uvs = uvs.flatten()
+                uv_layout = bin_buffer.tell(), uvs.shape[0]
 
             bin_data = bin_buffer.getvalue()
             hash = md5(bin_data).hexdigest()
@@ -373,9 +466,9 @@ class IsaacSimPublisher(SimPublisher):
                 id=mesh_id,
                 indicesLayout=indices_layout,
                 verticesLayout=vertices_layout,
+                normalsLayout=normal_layout,
+                uvLayout=uv_layout,
                 dataHash=hash,
-                normalsLayout=normals_layout,
-                uvLayout=(0, 0),
             )
 
             self.sim_scene.meshes.append(mesh)
@@ -384,8 +477,8 @@ class IsaacSimPublisher(SimPublisher):
             sim_mesh = SimVisual(
                 type=VisualType.MESH,
                 mesh=mesh_id,
-                color=[0.5, 0.7, 0.6, 1.0],
-                trans=SimTransform(pos=[5, 0, 0]),
+                color=[1.0, 1.0, 1.0, 1.0],
+                trans=SimTransform(),
             )
             sim_object.visuals.append(sim_mesh)
 
@@ -393,7 +486,7 @@ class IsaacSimPublisher(SimPublisher):
 
         if root.IsInstance():
             proto = root.GetPrototype()
-            carb.log_info("\t" * indent + f"@prototype: {proto.GetName()}")
+            print("\t" * indent + f"@prototype: {proto.GetName()}")
 
             for child in proto.GetChildren():
                 if obj := self.parse_prim_tree(child, indent + 1):
@@ -414,7 +507,7 @@ class IsaacSimPublisher(SimPublisher):
         # for name, trans in self.tracked_obj_trans.items():
         #     pos, rot = trans
         #     state[name] = [-pos[1], pos[2], pos[0], rot[2], -rot[3], -rot[1], rot[0]]
-        return state
+        return {}
 
     def shutdown(self):
         self.stream_task.shutdown()
@@ -465,30 +558,30 @@ if __name__ == "__main__":
 
 
 # stage: Usd.Stage = omni.usd.get_context().get_stage()
-# carb.log_info(f"stage: {stage}\n")
+# print(f"stage: {stage}\n")
 
 
 # # def iterate_prim_children(root: Usd.Prim):
-# #     carb.log_info(f"{root.GetName()}")
+# #     print(f"{root.GetName()}")
 # #     obj: Usd.Prim
 # #     for obj in root.GetChildren():
-# #         carb.log_info("")
-# #         carb.log_info("=" * 50)
-# #         carb.log_info(f"obj: {obj}")
-# #         carb.log_info(f"type: {obj.GetTypeName()}")
-# #         carb.log_info(f"is instance: {obj.IsInstance()}")
-# #         carb.log_info(f"is instance proxy: {obj.IsInstanceProxy()}")
-# #         carb.log_info(f"is instancable: {obj.IsInstanceable()}")
+# #         print("")
+# #         print("=" * 50)
+# #         print(f"obj: {obj}")
+# #         print(f"type: {obj.GetTypeName()}")
+# #         print(f"is instance: {obj.IsInstance()}")
+# #         print(f"is instance proxy: {obj.IsInstanceProxy()}")
+# #         print(f"is instancable: {obj.IsInstanceable()}")
 # #         if obj.IsInstance():
-# #             carb.log_info(obj.GetPrototype().IsInPrototype())
-# #             carb.log_info(obj.GetPrototype().GetChildrenNames())
-# #             carb.log_info(obj.GetPrototype().GetTypeName())
+# #             print(obj.GetPrototype().IsInPrototype())
+# #             print(obj.GetPrototype().GetChildrenNames())
+# #             print(obj.GetPrototype().GetTypeName())
 # #             for child in obj.GetPrototype().GetChildren():
-# #                 carb.log_info(f"{child.GetName()} {child.GetTypeName()}")
+# #                 print(f"{child.GetName()} {child.GetTypeName()}")
 # #         else:
-# #             carb.log_info(obj.GetChildrenNames())
+# #             print(obj.GetChildrenNames())
 # #             for i, name in enumerate(obj.GetPropertyNames()):
-# #                 carb.log_info(name)
+# #                 print(name)
 
 # #         if obj.IsInstance():
 # #             iterate_prim_children(obj.GetPrototype())
@@ -504,20 +597,20 @@ if __name__ == "__main__":
 # # prim = stage.GetPrimAtPath("/World/Origin1/Table/Visuals")
 
 # # print(omni.usd.get_world_transform_matrix(prim, timecode))
-# # carb.log_info(prim)
-# # carb.log_info(prim.IsInstance())
-# # carb.log_info(prim.GetTypeName())
-# # carb.log_info(prim.GetPrototype())
+# # print(prim)
+# # print(prim.IsInstance())
+# # print(prim.GetTypeName())
+# # print(prim.GetPrototype())
 # # proto = prim.GetPrototype()
-# # carb.log_info(proto.GetChildrenNames())
+# # print(proto.GetChildrenNames())
 # # geom = proto.GetChild("TableGeom")
-# # carb.log_info(geom)
-# # carb.log_info(geom.GetTypeName())
-# # carb.log_info(geom.GetChildrenNames())
-# # carb.log_info(geom.GetChild("subset").GetChildrenNames())
+# # print(geom)
+# # print(geom.GetTypeName())
+# # print(geom.GetChildrenNames())
+# # print(geom.GetChild("subset").GetChildrenNames())
 # # mesh = UsdGeom.Mesh(geom)
-# # carb.log_info(mesh)
+# # print(mesh)
 # # points = np.asarray(mesh.GetPointsAttr().Get())
 # # indices = np.asarray(mesh.GetFaceVertexIndicesAttr().Get())
-# # carb.log_info(f"{points} {points.dtype} {points.shape}")
-# # carb.log_info(f"{indices} {indices.dtype} {indices.shape}")
+# # print(f"{points} {points.dtype} {points.shape}")
+# # print(f"{indices} {indices.dtype} {indices.shape}")
