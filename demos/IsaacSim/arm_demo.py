@@ -203,6 +203,7 @@ def run_simulator(
 
 class IsaacSimPublisher(SimPublisher):
     def __init__(self, host: str, stage: Usd.Stage) -> None:
+        self.tracked_prims: list[dict] = []
         sim_scene = self.parse_scene(stage)
         super().__init__(sim_scene, host)
 
@@ -215,7 +216,7 @@ class IsaacSimPublisher(SimPublisher):
 
         scene.root = SimObject(name="root", trans=SimTransform())
 
-        obj1 = SimObject(name="object_1")
+        obj1 = SimObject(name="object_1", trans=SimTransform(pos=[10, 0, 0]))
         obj1.visuals.append(
             SimVisual(
                 type=VisualType.CUBE,
@@ -282,7 +283,7 @@ class IsaacSimPublisher(SimPublisher):
                 type=VisualType.MESH,
                 mesh="mesh_1",
                 color=[0.5, 0.7, 0.6, 1.0],
-                trans=SimTransform(pos=[5, 0, 0]),
+                trans=SimTransform(pos=[-10, 0, 0]),
             )
         )
         scene.root.children.append(obj2)
@@ -493,6 +494,9 @@ class IsaacSimPublisher(SimPublisher):
             )
             sim_object.visuals.append(sim_mesh)
 
+            # track meshes
+            self.tracked_prims.append({"name": sim_object.name, "prim": root})
+
         child: Usd.Prim
 
         if root.IsInstance():
@@ -518,11 +522,39 @@ class IsaacSimPublisher(SimPublisher):
         super().initialize_task()
 
     def get_update(self) -> dict[str, list[float]]:
-        state = {"object_1": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]}
+        state = {}
         # for name, trans in self.tracked_obj_trans.items():
         #     pos, rot = trans
         #     state[name] = [-pos[1], pos[2], pos[0], rot[2], -rot[3], -rot[1], rot[0]]
-        return {}
+
+        timeline = omni.timeline.get_timeline_interface()
+        timecode = timeline.get_current_time() * timeline.get_time_codes_per_seconds()
+
+        print()
+        print(timecode)
+        for tracked_prim in self.tracked_prims:
+            prim = tracked_prim["prim"]
+            trans_mat = omni.usd.get_world_transform_matrix(prim, timecode)
+            print(f"{tracked_prim['name']}: {trans_mat}")
+
+            translate = trans_mat.ExtractTranslation()
+            translate = [-translate[1], translate[2], translate[0]]
+
+            rot = trans_mat.ExtractRotationQuat()
+            imag = rot.GetImaginary()
+            rot = [imag[1], -imag[2], -imag[0], rot.GetReal()]
+
+            state[tracked_prim["name"]] = [
+                -translate[1],
+                translate[2],
+                translate[0],
+                rot[2],
+                -rot[3],
+                -rot[1],
+                rot[0],
+            ]
+
+        return state
 
     def shutdown(self):
         self.stream_task.shutdown()
