@@ -500,9 +500,10 @@ class IsaacSimPublisher(SimPublisher):
             sim_object.visuals.append(sim_mesh)
 
             # track meshes
-            self.tracked_prims.append(
-                {"name": sim_object.name, "prim": root, prim_path: ""}
-            )
+            if prim_path == "/World/Origin1/Robot/panda_hand":
+                self.tracked_prims.append(
+                    {"name": sim_object.name, "prim": root, prim_path: ""}
+                )
 
         child: Usd.Prim
 
