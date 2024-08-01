@@ -287,13 +287,19 @@ class IsaacSimPublisher(SimPublisher):
         )
         scene.root.children.append(obj2)
 
-        obj2 = self.parse_prim_tree(stage.GetPrimAtPath("/World/Origin1/Tables"))
+        root_path = "/World/Origin1"
+        obj2 = self.parse_prim_tree(root=stage.GetPrimAtPath(root_path))
         assert obj2 is not None
         scene.root.children.append(obj2)
 
         return scene
 
-    def parse_prim_tree(self, root: Usd.Prim, indent=0) -> SimObject | None:
+    def parse_prim_tree(
+        self,
+        root: Usd.Prim,
+        indent=0,
+        parent_path=None,
+    ) -> SimObject | None:
         if root.GetTypeName() not in {"Xform", "Mesh"}:  # Cube
             return
 
@@ -335,14 +341,19 @@ class IsaacSimPublisher(SimPublisher):
         imag = rot.GetImaginary()
         rot = [imag[1], -imag[2], -imag[0], rot.GetReal()]
 
+        if parent_path is None:
+            prim_path = str(root.GetPrimPath())
+        else:
+            prim_path = f"{parent_path}/{root.GetName()}"
+
         sim_object = SimObject(
-            name=str(root.GetPrimPath()).replace("/", "_"),
+            name=prim_path.replace("/", "_"),
             trans=SimTransform(pos=translate, rot=rot, scale=scale),
         )
 
         print(
             "\t" * indent
-            + f"{root.GetPrimPath()}: {root.GetTypeName()} {root.GetAttribute('purpose').Get()}"
+            + f"{prim_path}: {root.GetTypeName()} {root.GetAttribute('purpose').Get()}"
         )
 
         # maybe time_code is necessary
@@ -486,15 +497,19 @@ class IsaacSimPublisher(SimPublisher):
 
         if root.IsInstance():
             proto = root.GetPrototype()
-            print("\t" * indent + f"@prototype: {proto.GetName()}")
+            print("\t" * indent + f"@prototype: {proto.GetPrimPath()}")
 
             for child in proto.GetChildren():
-                if obj := self.parse_prim_tree(child, indent + 1):
+                if obj := self.parse_prim_tree(
+                    root=child, indent=indent + 1, parent_path=prim_path
+                ):
                     sim_object.children.append(obj)
 
         else:
             for child in root.GetChildren():
-                if obj := self.parse_prim_tree(child, indent + 1):
+                if obj := self.parse_prim_tree(
+                    root=child, indent=indent + 1, parent_path=prim_path
+                ):
                     sim_object.children.append(obj)
 
         return sim_object
