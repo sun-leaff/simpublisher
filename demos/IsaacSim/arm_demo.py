@@ -46,6 +46,7 @@ import numpy as np
 import omni
 import carb
 from omni.physx.scripts import utils
+from omni.physx import get_physx_interface
 
 import omni.isaac.core.utils.prims as prim_utils
 
@@ -486,6 +487,10 @@ class IsaacSimPublisher(SimPublisher):
             self.sim_scene.meshes.append(mesh)
             self.sim_scene.raw_data[mesh.dataHash] = bin_data
 
+            #!
+            #! do not create new mesh when multiple primitives point to the same prototype
+            #!
+
             sim_mesh = SimVisual(
                 type=VisualType.MESH,
                 mesh=mesh_id,
@@ -495,7 +500,9 @@ class IsaacSimPublisher(SimPublisher):
             sim_object.visuals.append(sim_mesh)
 
             # track meshes
-            self.tracked_prims.append({"name": sim_object.name, "prim": root})
+            self.tracked_prims.append(
+                {"name": sim_object.name, "prim": root, prim_path: ""}
+            )
 
         child: Usd.Prim
 
@@ -533,9 +540,15 @@ class IsaacSimPublisher(SimPublisher):
         print()
         print(timecode)
         for tracked_prim in self.tracked_prims:
+            prim_name = tracked_prim["name"]
+            # prim_path = tracked_prim["path"]
             prim = tracked_prim["prim"]
+
+            # cur_trans = get_physx_interface().get_rigidbody_transformation(prim_path)
+            # print(cur_trans)
+
             trans_mat = omni.usd.get_world_transform_matrix(prim, timecode)
-            print(f"{tracked_prim['name']}: {trans_mat}")
+            print(f"{prim_name}: {trans_mat}")
 
             translate = trans_mat.ExtractTranslation()
             translate = [-translate[1], translate[2], translate[0]]
@@ -544,7 +557,7 @@ class IsaacSimPublisher(SimPublisher):
             imag = rot.GetImaginary()
             rot = [imag[1], -imag[2], -imag[0], rot.GetReal()]
 
-            state[tracked_prim["name"]] = [
+            state[prim_name] = [
                 -translate[1],
                 translate[2],
                 translate[0],
@@ -577,6 +590,10 @@ def main():
 
     # Initialize the simulation context
     sim_cfg = sim_utils.SimulationCfg()
+    sim_cfg.use_fabric = False
+    sim_cfg.device = "cpu"
+    sim_cfg.use_gpu_pipeline = False
+    sim_cfg.physx.use_gpu = False
     sim = sim_utils.SimulationContext(sim_cfg)
 
     # Set main camera
